@@ -59,7 +59,7 @@ from hrms.payroll.utils import sanitize_expression
 class SalarySlip(TransactionBase):
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
-		self.series = f"Sal Slip/{self.employee}/.#####"
+		self.default_series = f"Sal Slip/{self.employee}/.#####"
 		self.whitelisted_globals = {
 			"int": int,
 			"float": float,
@@ -75,7 +75,21 @@ class SalarySlip(TransactionBase):
 		}
 
 	def autoname(self):
-		self.name = make_autoname(self.series)
+		if not self.has_custom_naming_series:
+			self.name = make_autoname(self.default_series)
+
+	@property
+	def has_custom_naming_series(self):
+		if not hasattr(self, "__has_custom_naming_series"):
+			self.__has_custom_naming_series = frappe.db.exists(
+				"Property Setter",
+				{
+					"doc_type": "Salary Slip",
+					"property": "autoname",
+				},
+			)
+
+		return self.__has_custom_naming_series
 
 	@property
 	def joining_date(self):
@@ -211,7 +225,8 @@ class SalarySlip(TransactionBase):
 	def on_trash(self):
 		from frappe.model.naming import revert_series_if_last
 
-		revert_series_if_last(self.series, self.name)
+		if not self.has_custom_naming_series:
+			revert_series_if_last(self.default_series, self.name)
 
 	def get_status(self):
 		if self.docstatus == 0:
@@ -585,7 +600,7 @@ class SalarySlip(TransactionBase):
 
 		for d in working_days_list:
 			if relieving_date and d > relieving_date:
-				continue
+				break
 
 			leave = get_lwp_or_ppl_for_date(str(d), self.employee, holidays)
 			if leave:
@@ -598,7 +613,7 @@ class SalarySlip(TransactionBase):
 
 				if is_partially_paid_leave:
 					equivalent_lwp_count *= (
-						fraction_of_daily_salary_per_leave if fraction_of_daily_salary_per_leave else 1
+						(1 - fraction_of_daily_salary_per_leave) if fraction_of_daily_salary_per_leave else 1
 					)
 
 				lwp += equivalent_lwp_count
