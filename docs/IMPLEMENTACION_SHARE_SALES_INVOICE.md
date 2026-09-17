@@ -1,42 +1,50 @@
-# DOCUMENTACIÓN DE IMPLEMENTACIÓN Y CORRECCIÓN: COMPARTIR SALES INVOICE COMO PDF (ETAPA 1)
+# DOCUMENTACIÓN DE IMPLEMENTACIÓN: COMPARTIR SALES INVOICE (WHATSAPP + PDF)
 
 ## 1. RESUMEN DE LA SOLUCIÓN
 
-Se ha corregido y optimizado la **Etapa 1: Compartir Sales Invoice como PDF mediante el Sistema Nativo del Dispositivo** en LEAF ERP v14.
+Se ha implementado una solución robusta y multiplataforma para **Compartir Facturas de Venta (Sales Invoice)** directamente hacia **WhatsApp / WhatsApp Business** y descarga/impresión de **PDF** en LEAF ERP v14.
 
-### Diagnóstico de la Causa Raíz del Bloqueo ("Failed to fetch"):
-En entornos de desarrollo o con servidor monohilo (Werkzeug / `bench start`), la función nativa `frappe.utils.print_format.download_pdf` hacía que `wkhtmltopdf` intentara realizar peticiones HTTP de regreso a `http://127.0.0.1:8000` o `http://development:8000` para descargar imágenes y CSS. Al estar el único hilo del servidor ocupado procesando la llamada original de PDF, se producía un **interbloqueo de red (deadlock)**, lo que congelaba el servidor y retornaba `Failed to fetch` tras 30+ segundos.
+### Limitación previa de `navigator.share({ files })`:
+Los navegadores móviles de terceros en iOS (Chrome, Edge, Firefox) y navegadores de escritorio (Chrome en macOS/Windows) restringen la API de compartir archivos binarios (`files: [pdf]`), causando fallbacks no deseados o mensajes de bloqueo.
 
-### Solución Implementada (100% Zero-Fork):
-Se implementó un generador de PDF seguro y ultra-rápido en la Custom App `leaf` (`apps/leaf/leaf/controllers/share_analytics.py`):
-1. Captura la plantilla HTML del Print Format seleccionado.
-2. Convierte todas las URLs relativas y HTTP de activos/archivos a rutas locales de sistema de archivos (`file://...`).
-3. Ejecuta `wkhtmltopdf` en modo de lectura local directa sin realizar ninguna petición de red HTTP.
-4. Renderiza el PDF en **menos de 1 segundo** (ejemplo probado: 24,595 bytes sin bloqueos).
+### Solución Implementada:
+Un modal inteligente de alta disponibilidad que ofrece:
+1. **Envío Directo a WhatsApp / WhatsApp Business (`wa.me`)**:
+   - Autocompleta automáticamente el número celular del cliente (`Customer.mobile_no` o `Contact`).
+   - Soporta números locales de Honduras (8 dígitos -> agrega automáticamente prefijo `504`) e internacionales.
+   - Mensaje prediseñado en español neutro con el nombre del cliente, número de factura, monto total formateado y enlace directo al PDF.
+   - Permite al usuario editar o personalizar el mensaje antes de enviar.
+2. **Descarga Directa de PDF**:
+   - Genera y descarga el archivo PDF sin bloqueos ni retrasos.
+3. **Ver / Imprimir**:
+   - Abre la vista de impresión en una pestaña nueva con el formato seleccionado.
+4. **Compartir Nativo (Sistema)**:
+   - Si el dispositivo soporta `navigator.share`, permite compartir el texto y enlace hacia cualquier otra app instalada (AirDrop, Correo, Telegram, etc.).
 
 ---
 
 ## 2. ARCHIVOS MODIFICADOS Y CREADOS
 
-### A. Backend (`apps/leaf/leaf/controllers/share_analytics.py`)
-- Método whitelisted `leaf.controllers.share_analytics.download_pdf`:
-  - Valida permisos de lectura del usuario sobre la factura (`doc.check_permission("read")`).
-  - Convierte URLs de assets a `file://`.
-  - Configura `enable-local-file-access` e ignora advertencias de red externas.
-  - Retorna la respuesta binaria PDF con cabecera `Content-Type: application/pdf`.
+### A. Backend (`erpnext/accounts/doctype/sales_invoice/share_invoice.py`)
+- `get_share_details(doctype, name, format=None)`:
+  - Obtiene datos de contacto del cliente, teléfono celular, totales formateados y URL del PDF.
+- `download_pdf(doctype, name, format=None, no_letterhead=0, letterhead=None)`:
+  - Generador de PDF ultra-rápido y seguro contra bloqueos de red locales.
+- `log_share_event(doctype, name, print_format=None, share_method=None)`:
+  - Registro anónimo de eventos de uso y adopción (`whatsapp`, `download`, `native_share`).
 
-### B. Frontend (`apps/leaf/leaf/public/js/sales_invoice.js`)
-- Actualizada la llamada `fetch` para invocar `/api/method/leaf.controllers.share_analytics.download_pdf`.
-- Integra el selector de `Print Format`, la invocación de `navigator.share` y la estrategia de fallback automática.
+### B. Frontend (`erpnext/accounts/doctype/sales_invoice/sales_invoice.js`)
+- Botón **"Compartir Factura"** en la barra superior y en el menú de "Acciones".
+- Modal interactivo con selector de formato de impresión, teléfono, mensaje editable y botón destacado de WhatsApp en verde oficial (`#25D366`).
 
 ---
 
-## 3. INSTRUCCIONES PARA VERIFICAR EN EL NAVEGADOR
+## 3. CÓMO PROBAR EN EL NAVEGADOR
 
-1. **Reiniciar o Descongelar Servidor Dev** (Si habías bloqueado el proceso `bench start` manualmente, vuelve a iniciarlo).
-2. **Refrescar el Navegador**:
-   Haga `Ctrl + Shift + R` (o `Cmd + Shift + R` en Mac) en la pantalla de LEAF ERP para limpiar la caché de JS.
-3. **Probar la Acción**:
-   - Abra cualquier factura de venta (`Sales Invoice`), ej. `000-001-01-00000601`.
-   - Haga clic en **"Compartir PDF"**.
-   - El PDF se generará de manera **inmediata** (sin congelar el sistema) y abrirá el Share Sheet nativo del dispositivo (WhatsApp, Mail, Drive, etc.) o descargará el PDF en fallback si no dispone de Share Sheet.
+1. **Recargar el Navegador**:
+   Haga `Ctrl + Shift + R` (o `Cmd + Shift + R` en Mac) en la pantalla de la Factura de Venta para refrescar el código JavaScript.
+2. **Abrir una Factura de Venta**:
+   - Presione el botón **"Compartir Factura"**.
+   - Se abrirá el modal con el teléfono del cliente autocompletado y el mensaje con el enlace al PDF listo.
+   - Al pulsar **"Abrir en WhatsApp"**, se abrirá directamente el chat de WhatsApp con el mensaje cargado.
+   - Si prefiere el archivo en su dispositivo, use **"Descargar PDF"** o **"Ver / Imprimir"**.
